@@ -17,6 +17,8 @@ def get_db_connection():
 
 @app.route("/")
 def home():
+    return
+app.send_static_file("matte_glass.final.html")
 
 
 
