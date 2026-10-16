@@ -15,9 +15,11 @@ def get_db_connection():
     return psycopg2.connect(database_url)
 
 
+from flask import Flask, jsonify, request, send_file
+
 @app.route("/")
 def home():
-    return app.send_static_file("matte_glass.final.html")
+    return send_file("matte_glass.final.html")
 
 
 
