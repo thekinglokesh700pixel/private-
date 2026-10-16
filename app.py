@@ -17,7 +17,10 @@ def get_db_connection():
 
 @app.route("/")
 def home():
-    return app.send_static_file("matte_glass.final.html")
+    return app.send_from_directory(
+        os.path.dirname(os.path.abspath(__file__)),
+        "matte_glass.final.html"
+    )
 
 
 
