@@ -17,7 +17,8 @@ def get_db_connection():
 
 @app.route("/")
 def home():
-    return "November 13 backend is running!"
+    return 
+app.send_file("matte_glass.final.html")
 
 
 @app.route("/health")
