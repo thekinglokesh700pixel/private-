@@ -1,22 +1,18 @@
 from flask import Flask, jsonify, request
-import mysql.connector
+import psycopg2
+from psycopg2.extras import Json
 import os
 
 app = Flask(__name__)
 
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return response
+
 def get_db_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user=os.getenv("DB_USER", "root"),
-        password=os.environ["DB_PASSWORD"],
-        database="private"
-    )
+    database_url = os.environ.get("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured")
+
+    return psycopg2.connect(database_url)
 
 
 @app.route("/")
@@ -26,88 +22,95 @@ def home():
 
 @app.route("/health")
 def health():
+    connection = None
+
     try:
         connection = get_db_connection()
-        connection.close()
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
 
         return jsonify({
             "status": "success",
-            "message": "Python connected to MySQL"
+            "message": "Python connected to PostgreSQL"
         })
 
-    except (mysql.connector.Error, KeyError):
+    except Exception:
         app.logger.exception("Database connection failed")
 
         return jsonify({
             "status": "error",
-            "message": "Database connection failed. Check server configuration."
+            "message": "Database connection failed. Check server logs."
         }), 500
+
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 @app.route("/api/answers", methods=["POST"])
 def save_answers():
     data = request.get_json(silent=True)
 
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or not data:
         return jsonify({
             "status": "error",
-            "message": "Please send answers as a JSON object."
-        }), 400
-
-    if not data:
-        return jsonify({
-            "status": "error",
-            "message": "No answers were provided."
-        }), 400
-
-    if not all(
-        isinstance(key, str) and isinstance(value, (str, int, float, bool, list, dict, type(None)))
-        for key, value in data.items()
-    ):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid answer format."
+            "message": "Please send answers as a non-empty JSON object."
         }), 400
 
     connection = None
-    cursor = None
 
     try:
-        import json
-
         connection = get_db_connection()
-        cursor = connection.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO questionnaire_answers (answers)
-            VALUES (%s)
-            """,
-            (json.dumps(data, ensure_ascii=False),)
-        )
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS questionnaire_answers (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    answers JSONB NOT NULL
+                )
+            """)
+
+            cursor.execute(
+                """
+                INSERT INTO questionnaire_answers (answers)
+                VALUES (%s)
+                RETURNING id
+                """,
+                (Json(data),)
+            )
+
+            answer_id = cursor.fetchone()[0]
 
         connection.commit()
 
         return jsonify({
             "status": "success",
-            "message": "Answers saved successfully."
+            "message": "Answers saved successfully.",
+            "id": answer_id
         }), 201
 
-    except (mysql.connector.Error, KeyError):
+    except Exception:
+        if connection is not None:
+            connection.rollback()
+
         app.logger.exception("Could not save questionnaire answers")
 
         return jsonify({
             "status": "error",
-            "message": "Could not save answers. Check the server configuration."
+            "message": "Could not save answers. Check server logs."
         }), 500
 
     finally:
-        if cursor is not None:
-            cursor.close()
-
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        debug=False
+    )
